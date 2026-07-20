@@ -114,7 +114,7 @@ if not _G._TLPersist then
         reactDirection  = "camera",
         perfRed = false, perfShadow = false, perfPhysics = false, perfNet = false,
         -- nuevos
-        antiRagdoll = false, espEnabled = false,
+        antiRagdoll = false,
         walkSpeed = 16, jumpPower = 50,
         -- optimizaciones delay & reach
         reachMode = "Hybrid",
@@ -667,7 +667,7 @@ function VxnityUI:CreateWindow(opts)
 
     local function createTab(name, order)
         local tabBtn = Instance.new("TextButton"); tabBtn.Name = "TabBtn_"..name
-        tabBtn.BackgroundColor3 = BG_ELEM
+        tabBtn.BackgroundColor3 = BG_ELEM; tabBtn.TextColor3 = TEXT_GRAY
         tabBtn.Font = Enum.Font.GothamMedium; tabBtn.TextSize = 11
         tabBtn.LayoutOrder = order; tabBtn.Parent = Sidebar; tabBtn.AutoButtonColor = false
         Instance.new("UICorner",tabBtn).CornerRadius = UDim.new(0,6)
@@ -1367,62 +1367,50 @@ HomeTab:Section({ Title="Info" })
 HomeTab:Button({ Title="Touchline P v1", Desc="Build mejorado — Gonzita" })
 HomeTab:Button({ Title="Jugador: "..LocalPlayer.Name, Desc="Executor: Delta / Fluxus / Synapse" })
 HomeTab:Section({ Title="Changelog v1" })
-HomeTab:Button({ Title="✓ task.spawn / task.wait (no deprecated)" })
+HomeTab:Button({ Title="✓ Ball size default 18 (como ostia.lua)" })
+HomeTab:Button({ Title="✓ Speed boost mejorado (delta-based)" })
 HomeTab:Button({ Title="✓ Fix doble AssemblyLinearVelocity" })
 HomeTab:Button({ Title="✓ Fix glowConn closure bug" })
-HomeTab:Button({ Title="✓ Fix GK Hook (hum.LLCL eliminado)" })
-HomeTab:Button({ Title="✓ Anti-kick hook mejorado (sigiloso)" })
-HomeTab:Button({ Title="✓ findBall más preciso" })
-HomeTab:Button({ Title="✓ Tab Misc: WalkSpeed, JumpPower, Anti-Ragdoll" })
-HomeTab:Button({ Title="✓ Tab ESP: Selección visual del balón" })
-HomeTab:Button({ Title="✓ React cooldown corregido (0.3s)" })
-HomeTab:Button({ Title="✓ Velocity ramping para evitar detección" })
+HomeTab:Button({ Title="✓ Fix reach paréntesis y syntax" })
+HomeTab:Button({ Title="✓ Fix ScrollingDirection y UIClipDescendants" })
+HomeTab:Button({ Title="✓ Fix ColorSequence time=1.0" })
+HomeTab:Button({ Title="✓ Eliminado Shot Curves / Chips (mandaba la pelota a volar)" })
+HomeTab:Button({ Title="✓ Eliminado ESP (innecesario)" })
+HomeTab:Button({ Title="✓ PerfTab mejorado (MAX FPS MODE)" })
 
 
 local BallTab       = Window:Tab({ Title="Balon" })
-local ballEnabled   = false
-local ballSize      = 1
+local ballEnabled   = true
+local ballSize      = 18
 local ballTrans     = 0.4
-local highlightEnabled = false
-local highlightPart    = nil
 local speedBoost    = false
 local speedMult     = 2.0
 local maxBallSpeed  = 400
 local _lastBallSpd  = 0
-local _kickDetected = false
+local _prevBallSpeed = 0
+local _boostCD      = 0
 
 BallTab:Section({ Title="Visuales del Balon" })
-BallTab:Toggle({ Title="Control de Tamano", Desc="Activa control visual del balon",
+BallTab:Toggle({ Title="Control de Tamano", Desc="Activa control visual del balon", PersistKey="ballEnabled",
     Callback=function(v) ballEnabled=v end })
-BallTab:Slider({ Title="Tamano del Balon", Value={Min=1,Max=50,Default=1}, Step=1,
+BallTab:Slider({ Title="Tamano del Balon", Value={Min=1,Max=50,Default=18}, Step=1,
     Callback=function(v) ballSize=v end })
 BallTab:Slider({ Title="Transparencia", Value={Min=0,Max=1,Default=0.4}, Step=0.1,
     Callback=function(v) ballTrans=v end })
-BallTab:Toggle({ Title="Resaltado Visual", Desc="Muestra area del balon",
-    Callback=function(state)
-        highlightEnabled=state
-        if state then
-            highlightPart = Instance.new("Part"); highlightPart.Name = "TL_BallHL"
-            highlightPart.Size = Vector3.new(9,0.1,9); highlightPart.Anchored = true
-            highlightPart.BrickColor = BrickColor.new("Bright blue"); highlightPart.Transparency = 0.7
-            highlightPart.CanCollide = false; highlightPart.Material = Enum.Material.Neon
-            highlightPart.Parent = Workspace
-        else
-            if highlightPart then highlightPart:Destroy(); highlightPart=nil end
-        end
-    end })
-BallTab:Section({ Title="Guardian CanCollide" })
-BallTab:Button({ Title="Activar Guardian", Desc="Fuerza CanCollide = false",
+BallTab:Button({ Title="Restablecer Balon", Desc="Tamano y transparencia original",
     Callback=function()
-        local b = findBall()
-        if b then pcall(function() b.CanCollide=false end) end
-        VxnityUI:Notify({Title="Guardian",Desc="CanCollide desactivado",Duration=2})
+        ballSize=18; ballTrans=0.4
+        local b = _G._TLBall
+        if b and b.Parent then
+            pcall(function() b.Size = Vector3.new(18,18,18); b.Transparency = 0.4 end)
+        end
+        VxnityUI:Notify({Title="Balon",Desc="Restablecido a defecto",Duration=2})
     end })
 BallTab:Section({ Title="Velocidad del Balon" })
-BallTab:Toggle({ Title="Aumento de Velocidad", Desc="Solo aplica al patear",
+BallTab:Toggle({ Title="Aumento de Velocidad", Desc="Solo aplica al patear", PersistKey="speedBoost",
     Callback=function(v) speedBoost=v end })
 BallTab:Slider({ Title="Multiplicador", Value={Min=1,Max=15,Default=2}, Step=1,
-    Callback=function(v) speedMult=v end })
+    Callback=function(v) speedMult=v; P.ballSpeedMult=v end })
 BallTab:Slider({ Title="Velocidad Maxima", Value={Min=100,Max=1500,Default=400}, Step=10,
     Callback=function(v) maxBallSpeed=v end })
 BallTab:Section({ Title="Preajustes" })
@@ -1634,24 +1622,6 @@ local function applyPreset(power, _, extraOffset, extraVel, curve)
     flashBall()
 end
 
-local function applyShotCurve(power, upForce, forwardForce, curveForce)
-    currentReactPower = power; P.reactPower = power
-    enableReactHook()
-    local ball, hrp = getReactTargets()
-    if not (ball and hrp) then return end
-    if not prepareBall(ball) then return end
-    local aim = getAimDirection(hrp)
-    local vel = (aim*(forwardForce or power) + Vector3.new(0,upForce or 0,0)) * ballSpeedMult
-    pcall(function() ball.CFrame = CFrame.new(hrp.Position + aim*0.15 + Vector3.new(0,0.1,0)) end)
-    if P.instantVelocity then
-        pcall(function() ball.AssemblyLinearVelocity = vel end)
-    else
-        applyVelocityRamped(ball, vel, 2)
-    end
-    pcall(function() ball.AssemblyAngularVelocity = Vector3.new(0,(curveForce or 0)*50,0) end)
-    flashBall()
-end
-
 ReactsTab:Section({ Title="Sistema de React Potencia" })
 ReactsTab:Button({ Title="VELOCIDAD ULTRA",    Desc="Balon a velocidad maxima!",  Callback=function() currentReactPower=5e18;  P.reactPower=currentReactPower; enableReactHook(); applyReactInstant(currentReactPower); VxnityUI:Notify({Title="ULTRA",  Desc="Velocidad maxima!",  Duration=2}) end })
 ReactsTab:Button({ Title="MEGA POTENCIA",      Desc="Potencia extrema!",          Callback=function() currentReactPower=1e22;  P.reactPower=currentReactPower; enableReactHook(); applyReactInstant(currentReactPower); VxnityUI:Notify({Title="MEGA",   Desc="Potencia extrema!",  Duration=2}) end })
@@ -1682,13 +1652,6 @@ ReactsTab:Button({ Title="MEGA LOCK",    Desc="Bloqueo pesado!",       Callback=
 ReactsTab:Button({ Title="ULTRA PIVOT",  Desc="Pivote!",               Callback=function() applyPreset(4e22,nil,0.15,nil,2); VxnityUI:Notify({Title="PIVOT",     Desc="Activo!",Duration=2}) end })
 ReactsTab:Button({ Title="KENYAH MAX",   Desc="Prediccion!",           Callback=function() applyPreset(6e23,nil,0.15,nil,1.5);VxnityUI:Notify({Title="KENYAH",    Desc="Activo!",Duration=2}) end })
 ReactsTab:Button({ Title="AERO MAX",     Desc="Aereo!",                Callback=function() applyPreset(5e22,nil,0.18,0.08,0.8);VxnityUI:Notify({Title="AERO",    Desc="Activo!",Duration=2}) end })
-
-ReactsTab:Section({ Title="Shot Curves / Chips" })
-ReactsTab:Button({ Title="LOB (Tiro Alto)",    Desc="Arco alto",       Callback=function() applyShotCurve(2e22,80000,30000,0);   VxnityUI:Notify({Title="LOB",   Desc="Arco!",    Duration=2}) end })
-ReactsTab:Button({ Title="CHIP (Tiro Corto)",  Desc="Rapido arriba",   Callback=function() applyShotCurve(3e22,120000,15000,0);  VxnityUI:Notify({Title="CHIP",  Desc="Chip!",    Duration=2}) end })
-ReactsTab:Button({ Title="CURVE (Tiro Curvo)", Desc="Efecto lateral",  Callback=function() applyShotCurve(5e22,20000,40000,3);   VxnityUI:Notify({Title="CURVE", Desc="Efecto!",  Duration=2}) end })
-ReactsTab:Button({ Title="POWER SHOT",         Desc="Maxima potencia", Callback=function() applyShotCurve(1e25,5000,80000,0);    VxnityUI:Notify({Title="POWER", Desc="Disparo!", Duration=2}) end })
-ReactsTab:Button({ Title="CROSS (Centro)",     Desc="Centro ancho",    Callback=function() applyShotCurve(4e22,60000,25000,2);   VxnityUI:Notify({Title="CROSS", Desc="Centro!",  Duration=2}) end })
 
 -- Touch-react
 if not _G._TLTouchReactConn then
@@ -1833,10 +1796,14 @@ end
 local function getOrCreateLV(ball, att)
     local lv = ball:FindFirstChild("_tlLV")
     if not lv then
-        lv = Instance.new("LinearVelocity"); lv.Name = "_tlLV"; lv.Attachment0 = att
-        lv.MaxForce = math.huge; lv.RelativeTo = Enum.ActuatorRelativeTo.World
-        lv.VelocityConstraintMode = Enum.VelocityConstraintMode.Vector
-        lv.VectorVelocity = Vector3.new(0,0,0); lv.Parent = ball
+        local ok, newLV = pcall(function()
+            local l = Instance.new("LinearVelocity"); l.Name = "_tlLV"; l.Attachment0 = att
+            l.MaxForce = math.huge; l.RelativeTo = Enum.ActuatorRelativeTo.World
+            l.VelocityConstraintMode = Enum.VelocityConstraintMode.Vector
+            l.VectorVelocity = Vector3.new(0,0,0); l.Parent = ball
+            return l
+        end)
+        if ok and newLV then lv = newLV else return nil end
     end
     return lv
 end
@@ -1897,6 +1864,7 @@ if not _G._TLHelperConn then
         if not prepareBall(ball) then return end
         local att = getOrCreateAtt(ball); local lv = getOrCreateLV(ball,att)
         local ballPos = ball.Position; local hrpPos = hrp.Position
+        if not lv then return end
         if spaceLock then
             if not lockedPos then lockedPos = ballPos end
             local toLock = lockedPos - ballPos
@@ -2102,101 +2070,120 @@ MiscTab:Toggle({ Title="Noclip", Desc="Atraviesa paredes",
         end
     end })
 
-local ESPTab = Window:Tab({ Title="ESP" })
-local espBox       = nil
-local espHighlight = nil
-local espConn      = nil
-
-local function setupBallESP(enable)
-    if not enable then
-        if espConn then espConn:Disconnect(); espConn=nil end
-        if espBox  then pcall(function() espBox:Destroy() end); espBox=nil end
-        if espHighlight then pcall(function() espHighlight:Destroy() end); espHighlight=nil end
-        return
-    end
-    espConn = RunService.Heartbeat:Connect(function()
-        local ball = _G._TLBall
-        if not (ball and ball.Parent) then return end
-        -- Usar SelectionBox para ESP visual
-        if not espBox or not espBox.Parent then
-            pcall(function() if espBox then espBox:Destroy() end end)
-            espBox = Instance.new("SelectionBox")
-            espBox.Color3    = ACCENT
-            espBox.LineThickness = 0.04
-            espBox.SurfaceTransparency = 0.7
-            espBox.SurfaceColor3 = ACCENT
-            espBox.Parent    = Workspace.CurrentCamera
-        end
-        pcall(function() espBox.Adornee = ball end)
-        -- Highlight adicional
-        if not espHighlight or not espHighlight.Parent then
-            pcall(function() if espHighlight then espHighlight:Destroy() end end)
-            espHighlight = Instance.new("SelectionBox")
-            espHighlight.Color3    = ACCENT3
-            espHighlight.LineThickness = 0.02
-            espHighlight.SurfaceTransparency = 0.9
-            espHighlight.SurfaceColor3 = ACCENT3
-            espHighlight.Parent  = Workspace.CurrentCamera
-        end
-        pcall(function() espHighlight.Adornee = ball end)
-    end)
-end
-
-ESPTab:Section({ Title="ESP del Balon" })
-ESPTab:Toggle({ Title="Ball ESP", Desc="Resalta el balon a traves de paredes", PersistKey="espEnabled",
-    Callback=function(state)
-        P.espEnabled = state
-        setupBallESP(state)
-        if state then VxnityUI:Notify({Title="Ball ESP",Desc="Activado!",Duration=2})
-        else VxnityUI:Notify({Title="Ball ESP",Desc="Desactivado",Duration=2}) end
-    end })
-ESPTab:Button({ Title="Encontrar Balon", Desc="Busca y marca el balon ahora",
-    Callback=function()
-        local b = findBall()
-        if b then
-            VxnityUI:Notify({Title="Balon",Desc="Encontrado: "..b.Name,Duration=3})
-        else
-            VxnityUI:Notify({Title="Balon",Desc="No encontrado en el mapa",Duration=3})
-        end
-    end })
-ESPTab:Button({ Title="Info del Balon", Desc="Posicion y velocidad actual",
-    Callback=function()
-        local b = _G._TLBall
-        if b and b.Parent then
-            local pos = b.Position; local vel = b.AssemblyLinearVelocity
-            VxnityUI:Notify({
-                Title="Balon Info",
-                Desc=string.format("Vel: %.0f | Pos: %.0f,%.0f,%.0f", vel.Magnitude, pos.X,pos.Y,pos.Z),
-                Duration=4
-            })
-        else
-            VxnityUI:Notify({Title="Balon",Desc="Balon no disponible",Duration=2})
-        end
-    end })
-
 local PerfTab = Window:Tab({ Title="Perf" })
+
 PerfTab:Section({ Title="Red" })
-PerfTab:Toggle({ Title="Optimizar Red", Desc="Reduce latencia", PersistKey="perfNet",
+PerfTab:Toggle({ Title="Optimizar Red", Desc="Reduce tick rate de red", PersistKey="perfNet",
     Callback=function(state)
         if state then pcall(function() settings().Network.Physics=30 end)
         else pcall(function() settings().Network.Physics=60 end) end
     end })
-PerfTab:Section({ Title="CPU" })
-PerfTab:Toggle({ Title="Optimizar Fisica", Desc="Reduce calculos", PersistKey="perfPhysics",
+PerfTab:Toggle({ Title="Reducir Envios", Desc="Menos paquetes por segundo", PersistKey="perfNetRate",
+    Callback=function(state)
+        if state then pcall(function() settings().Network.IncomingReplicationLag=0 end)
+        else pcall(function() settings().Network.IncomingReplicationLag=10 end) end
+    end })
+
+PerfTab:Section({ Title="CPU / Fisica" })
+PerfTab:Toggle({ Title="Fisica Voxel", Desc="Motor fisico simplificado", PersistKey="perfPhysics",
     Callback=function(state)
         if state then pcall(function() settings().Physics.PhysicsEngine="Voxel" end)
         else pcall(function() settings().Physics.PhysicsEngine="EnvironmentalPhysics" end) end
     end })
-PerfTab:Section({ Title="GPU" })
-PerfTab:Toggle({ Title="Reducir Efectos", Desc="Minimizar particulas", PersistKey="perfRed",
+PerfTab:Toggle({ Title="Reducir Hilos", Desc="Limita hilos de fisica", PersistKey="perfThreads",
+    Callback=function(state)
+        if state then pcall(function() settings().Physics.ThreadsAllowedToParticipate=2 end)
+        else pcall(function() settings().Physics.ThreadsAllowedToParticipate=math.huge end) end
+    end })
+
+PerfTab:Section({ Title="GPU / Rendering" })
+PerfTab:Toggle({ Title="Calidad Minima", Desc="Todo al minimo", PersistKey="perfAllGPU",
+    Callback=function(state)
+        if state then
+            pcall(function() settings().Rendering.QualityLevel=1 end)
+            pcall(function() settings().Rendering.EffectsQuality=0 end)
+            pcall(function() settings().Rendering.ShadowQuality=0 end)
+            pcall(function() settings().Rendering.MaterialQuality=0 end)
+            pcall(function() settings().Rendering.Antialiasing=0 end)
+            pcall(function() settings().Rendering.Brightness=0 end)
+        else
+            pcall(function() settings().Rendering.QualityLevel=10 end)
+            pcall(function() settings().Rendering.EffectsQuality=10 end)
+            pcall(function() settings().Rendering.ShadowQuality=10 end)
+            pcall(function() settings().Rendering.MaterialQuality=2 end)
+            pcall(function() settings().Rendering.Antialiasing=3 end)
+        end
+    end })
+PerfTab:Toggle({ Title="Reducir Efectos", Desc="Particulas y post-processing", PersistKey="perfRed",
     Callback=function(state)
         if state then pcall(function() settings().Rendering.EffectsQuality=0 end)
         else pcall(function() settings().Rendering.EffectsQuality=10 end) end
     end })
-PerfTab:Toggle({ Title="Reducir Sombras", Desc="Sombras desactivadas", PersistKey="perfShadow",
+PerfTab:Toggle({ Title="Sin Sombras", Desc="Sombras desactivadas", PersistKey="perfShadow",
     Callback=function(state)
         if state then pcall(function() settings().Rendering.ShadowQuality=0 end)
         else pcall(function() settings().Rendering.ShadowQuality=10 end) end
+    end })
+PerfTab:Toggle({ Title="Sin Anti-Aliasing", Desc="Reduce suavizado de bordes", PersistKey="perfAA",
+    Callback=function(state)
+        if state then pcall(function() settings().Rendering.Antialiasing=0 end)
+        else pcall(function() settings().Rendering.Antialiasing=3 end) end
+    end })
+PerfTab:Toggle({ Title="Sin Terrain FX", Desc="Desactiva efectos de terreno", PersistKey="perfTerrain",
+    Callback=function(state)
+        if state then pcall(function()
+            Workspace.Terrain.WaterWaveSize=0
+            Workspace.Terrain.WaterWaveSpeed=0
+            Workspace.Terrain.WaterTransparency=1
+            Workspace.Terrain.WaterReflectance=0
+        end)
+        else pcall(function()
+            Workspace.Terrain.WaterWaveSize=Vector3.new(0.15,0.15,0.15)
+            Workspace.Terrain.WaterWaveSpeed=8
+            Workspace.Terrain.WaterTransparency=0.5
+            Workspace.Terrain.WaterReflectance=0
+        end) end
+    end })
+
+PerfTab:Section({ Title="Todo en 1" })
+PerfTab:Button({ Title="MAX FPS MODE", Desc="Activa todo para maximo rendimiento",
+    Callback=function()
+        pcall(function() settings().Network.Physics=30 end)
+        pcall(function() settings().Network.IncomingReplicationLag=0 end)
+        pcall(function() settings().Physics.PhysicsEngine="Voxel" end)
+        pcall(function() settings().Physics.ThreadsAllowedToParticipate=2 end)
+        pcall(function() settings().Rendering.QualityLevel=1 end)
+        pcall(function() settings().Rendering.EffectsQuality=0 end)
+        pcall(function() settings().Rendering.ShadowQuality=0 end)
+        pcall(function() settings().Rendering.MaterialQuality=0 end)
+        pcall(function() settings().Rendering.Antialiasing=0 end)
+        pcall(function()
+            Workspace.Terrain.WaterWaveSize=0
+            Workspace.Terrain.WaterWaveSpeed=0
+            Workspace.Terrain.WaterTransparency=1
+            Workspace.Terrain.WaterReflectance=0
+        end)
+        P.perfNet=true; P.perfPhysics=true; P.perfRed=true; P.perfShadow=true
+        VxnityUI:Notify({Title="MAX FPS",Desc="Todo optimizado al maximo!",Duration=3})
+    end })
+PerfTab:Button({ Title="Restablecer Calidad", Desc="Vuelve a los valores por defecto",
+    Callback=function()
+        pcall(function() settings().Network.Physics=60 end)
+        pcall(function() settings().Network.IncomingReplicationLag=10 end)
+        pcall(function() settings().Physics.PhysicsEngine="EnvironmentalPhysics" end)
+        pcall(function() settings().Physics.ThreadsAllowedToParticipate=math.huge end)
+        pcall(function() settings().Rendering.QualityLevel=10 end)
+        pcall(function() settings().Rendering.EffectsQuality=10 end)
+        pcall(function() settings().Rendering.ShadowQuality=10 end)
+        pcall(function() settings().Rendering.MaterialQuality=2 end)
+        pcall(function() settings().Rendering.Antialiasing=3 end)
+        pcall(function()
+            Workspace.Terrain.WaterWaveSize=Vector3.new(0.15,0.15,0.15)
+            Workspace.Terrain.WaterWaveSpeed=8
+            Workspace.Terrain.WaterTransparency=0.5
+        end)
+        P.perfNet=false; P.perfPhysics=false; P.perfRed=false; P.perfShadow=false
+        VxnityUI:Notify({Title="Restablecido",Desc="Calidad original restaurada",Duration=3})
     end })
 
 local ConfigTab = Window:Tab({ Title="Config" })
@@ -2220,7 +2207,7 @@ ConfigTab:Button({ Title="Config por Defecto", Desc="Restaura valores originales
         P.helperEnabled=false; P.magnetMode=true; P.predictMode=true; P.spaceLock=false
         P.continuousReact=false; P.continuousPower=1e22; P.autoReact=false; P.autoReactRange=8
         P.counterReact=false; P.counterPower=1e22; P.reactDirection="camera"
-        P.walkSpeed=16; P.jumpPower=50; P.antiRagdoll=false; P.espEnabled=false
+        P.walkSpeed=16; P.jumpPower=50; P.antiRagdoll=false
         VxnityUI:Notify({Title="Config",Desc="Valores originales restaurados",Duration=2})
     end })
 
@@ -2249,22 +2236,19 @@ if not _G._TLMainLoop then
             end
             pcall(function() ball.CanCollide = false end)
 
-            if highlightEnabled and highlightPart and highlightPart.Parent then
-                highlightPart.Position = ball.Position - Vector3.new(0,1,0)
-            end
-
             if speedBoost then
                 local vel = ball.AssemblyLinearVelocity
                 local curSpeed = vel.Magnitude
-                if _lastBallSpd < 10 and curSpeed > 40 then _kickDetected = true end
-                if _kickDetected and curSpeed > 1 then
+                local now = tick()
+                local delta = curSpeed - _prevBallSpeed
+                if delta > 1 and now > _boostCD then
                     local newSpeed = math.min(curSpeed * speedMult, maxBallSpeed)
-                    if math.abs(newSpeed - curSpeed) > 1 then
+                    if curSpeed > 0 then
                         pcall(function() ball.AssemblyLinearVelocity = vel.Unit * newSpeed end)
                     end
+                    _boostCD = now + 0.03
                 end
-                if curSpeed < 2 then _kickDetected = false end
-                _lastBallSpd = curSpeed
+                _prevBallSpeed = curSpeed
             end
 
             if P.autoReact and currentReactPower > 0 then
@@ -2332,6 +2316,5 @@ if P.perfNet     then pcall(function() settings().Network.Physics=30 end) end
 if P.perfPhysics then pcall(function() settings().Physics.PhysicsEngine="Voxel" end) end
 if P.perfRed     then pcall(function() settings().Rendering.EffectsQuality=0 end) end
 if P.perfShadow  then pcall(function() settings().Rendering.ShadowQuality=0 end) end
-if P.espEnabled  then setupBallESP(true) end
 
 VxnityUI:Notify({ Title="Touchline v1", Desc="la cagada esta porfin ejecuta la ui", Duration=4 })
