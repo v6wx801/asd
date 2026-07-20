@@ -817,7 +817,7 @@ function VxnityUI:CreateWindow(opts)
                             glowFrame.BackgroundTransparency = glowFrame.BackgroundTransparency - 0.02
                             if glowFrame.BackgroundTransparency <= 0.82 then pulseUp = true end
                         end
-                    end)
+                    end))
                 else
                     dot.Position = UDim2.fromOffset(3,3); dot.BackgroundColor3 = TEXT_GRAY
                     togBtn.BackgroundColor3 = BG_DARK; glowFrame.BackgroundTransparency = 1
