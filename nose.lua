@@ -1504,7 +1504,7 @@ local function startReach()
                 end
             end)
         end
-    end)
+    end))
 end
 
 _G._TLReachRestart = function() if reachEnabled then startReach() end end
