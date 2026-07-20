@@ -747,7 +747,7 @@ function VxnityUI:CreateWindow(opts)
             sec.Font = Enum.Font.GothamBold; sec.TextSize = 11
             sec.TextXAlignment = Enum.TextXAlignment.Left; sec.LayoutOrder = self._order; sec.Parent = self._frame
             local secGrad = Instance.new("UIGradient")
-            secGrad.Color = ColorSequence.new({ColorSequenceKeypoint.new(0,ACCENT),ColorSequenceKeypoint.new(0.4,ACCENT_SOFT)})
+            secGrad.Color = ColorSequence.new({ColorSequenceKeypoint.new(0,ACCENT),ColorSequenceKeypoint.new(0.4,ACCENT_SOFT),ColorSequenceKeypoint.new(1,ACCENT_SOFT)})
             secGrad.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0,0),NumberSequenceKeypoint.new(1,0.4)})
             secGrad.Parent = sec
             local line = Instance.new("Frame")
