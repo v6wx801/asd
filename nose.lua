@@ -385,17 +385,6 @@ local function getAimDirection(hrp)
     return hrp.CFrame.LookVector
 end
 
-local function getIncomingRedirect(ball, hrp)
-    local bv = ball.AssemblyLinearVelocity
-    if bv.Magnitude > 5 then
-        local toMe = (hrp.Position - ball.Position).Unit
-        if bv.Unit:Dot(toMe) > 0.4 then
-            return (toMe * 1.5 + hrp.CFrame.LookVector * 0.5).Unit
-        end
-    end
-    return nil
-end
-
 local function getGravity()
     local g = Workspace.Gravity
     return Vector3.new(0, -g, 0)
@@ -1249,24 +1238,6 @@ local function getReactTargets()
     return _G._TLBall, _G._TLHRP
 end
 
-local function applyVelocityRamped(ball, targetVel, steps)
-    steps = steps or 1
-    if steps <= 1 then
-        pcall(function() ball.AssemblyLinearVelocity = targetVel end)
-        return
-    end
-    _tspawn(function()
-        for i = 1, steps do
-            pcall(function()
-                if ball and ball.Parent then
-                    ball.AssemblyLinearVelocity = targetVel * (i / steps)
-                end
-            end)
-            _twait(0.016)
-        end
-    end)
-end
-
 -- Centralized Namecall Hook Manager
 local oldNamecall = nil
 local gkMap = {SaveRA=true,SaveLA=true,SaveRL=true,SaveLL=true,SaveT=true,Tackle=true,Header=true,Kick=true}
@@ -1284,17 +1255,10 @@ local function centralNamecall(self, ...)
         local ball, hrp = getReactTargets()
         if ball and ball.Parent and hrp then
             if prepareBall(ball) then
-                local aim      = getAimDirection(hrp)
-                local redirect = P.counterReact and getIncomingRedirect(ball, hrp)
-                local dir      = redirect or aim
+                local dir = getAimDirection(hrp)
                 local targetPos = hrp.Position + dir * 0.15 + Vector3.new(0, 0.05, 0)
                 pcall(function() ball.CFrame = CFrame.new(targetPos) end)
-                local finalVel = dir * (currentReactPower * ballSpeedMult)
-                if P.instantVelocity then
-                    pcall(function() ball.AssemblyLinearVelocity = finalVel end)
-                else
-                    applyVelocityRamped(ball, finalVel, 2)
-                end
+                pcall(function() ball.AssemblyLinearVelocity = dir * (currentReactPower * ballSpeedMult) end)
                 pcall(function() ball.AssemblyAngularVelocity = Vector3.new(0, 0, 0) end)
                 flashBall()
             end
@@ -1309,9 +1273,9 @@ local function centralNamecall(self, ...)
             if ball and hrp then
                 pcall(function()
                     prepareBall(ball)
-                    local aim = getAimDirection(hrp)
-                    ball.CFrame = CFrame.new(hrp.Position + aim * 0.15 + Vector3.new(0, 0.05, 0))
-                    applyVelocityRamped(ball, aim * (currentReactPower * ballSpeedMult), 2)
+                    local dir = getAimDirection(hrp)
+                    ball.CFrame = CFrame.new(hrp.Position + dir * 0.15 + Vector3.new(0, 0.05, 0))
+                    ball.AssemblyLinearVelocity = dir * (currentReactPower * ballSpeedMult)
                 end)
             end
         end
@@ -1425,9 +1389,10 @@ local reachDistance  = P.reachDistance
 local reachMode      = P.reachMode or "Hybrid"
 local function startReach()
     cleanConn("reach")
-    local _char, _root, _hum, _ball, _limb = nil,nil,nil,nil,nil
+    local _char, _root, _hum, _limb = nil,nil,nil,nil
     local _lastRig, _frameSkip = nil, 0
-    setConn("reach", RunService.Heartbeat:Connect(function()  -- Heartbeat > RenderStepped para física
+    local _cachedBalls = {}
+    setConn("reach", RunService.Heartbeat:Connect(function()
         local character = LocalPlayer.Character
         if not character then return end
         if character ~= _char then
@@ -1435,17 +1400,28 @@ local function startReach()
             _hum  = character:FindFirstChild("Humanoid"); _limb = nil; _lastRig = nil
         end
         if not (_root and _hum) then return end
+
         _frameSkip = _frameSkip + 1
-        if _frameSkip >= 2 then  -- cada 2 frames (más reactivo)
+        if _frameSkip >= 2 then
             _frameSkip = 0
-            _ball = findBall()
-            if _ball then _G._TLBall = _ball end
+            _cachedBalls = {}
+            local rootPos = _root.Position
+            local rDist2 = reachDistance * reachDistance
+            for ball in pairs(_detectedBalls) do
+                if ball and ball.Parent and ball:IsA("BasePart") then
+                    local bp = ball.Position
+                    local dx, dy, dz = bp.X - rootPos.X, bp.Y - rootPos.Y, bp.Z - rootPos.Z
+                    if (dx*dx + dy*dy + dz*dz) <= rDist2 then
+                        table.insert(_cachedBalls, ball)
+                    end
+                else
+                    _detectedBalls[ball] = nil
+                end
+            end
+            if #_cachedBalls > 0 then _G._TLBall = _cachedBalls[1] end
         end
-        if not _ball or not _ball.Parent then return end
-        local dx = _root.Position.X - _ball.Position.X
-        local dy = _root.Position.Y - _ball.Position.Y
-        local dz = _root.Position.Z - _ball.Position.Z
-        if (dx*dx + dy*dy + dz*dz) > reachDistance*reachDistance then return end
+        if #_cachedBalls == 0 then return end
+
         local rig = _hum.RigType
         if rig ~= _lastRig or not _limb or not _limb.Parent then
             _lastRig = rig
@@ -1471,26 +1447,25 @@ local function startReach()
         local useTouch = (reachMode == "firetouchinterest" or reachMode == "Hybrid") and _has_firetouchinterest
         local useCollide = (reachMode == "Physical Collision" or reachMode == "Hybrid")
 
-        if useTouch then
-            for _, part in ipairs(partsToFire) do
-                pcall(function() firetouchinterest(part,_ball,0); firetouchinterest(part,_ball,1) end)
-            end
-        end
-
-        if useCollide then
-            pcall(function()
-                -- Trae ligeramente el balón hacia el cuerpo para forzar detección de colisión del motor de Roblox
+        for _, ball in ipairs(_cachedBalls) do
+            if useTouch then
                 for _, part in ipairs(partsToFire) do
-                    if part and _ball and _ball.Parent then
-                        local diff = part.Position - _ball.Position
-                        local dist = diff.Magnitude
-                        if dist < reachDistance and dist > 0.1 then
-                            local nudgeDir = diff.Unit
-                            _ball.CFrame = _ball.CFrame + nudgeDir * 0.05
+                    pcall(function() firetouchinterest(part, ball, 0); firetouchinterest(part, ball, 1) end)
+                end
+            end
+            if useCollide then
+                pcall(function()
+                    for _, part in ipairs(partsToFire) do
+                        if part and ball and ball.Parent then
+                            local diff = part.Position - ball.Position
+                            local dist = diff.Magnitude
+                            if dist < reachDistance and dist > 0.1 then
+                                ball.CFrame = ball.CFrame + diff.Unit * 0.05
+                            end
                         end
                     end
-                end
-            end)
+                end)
+            end
         end
     end))
 end
@@ -1553,21 +1528,11 @@ local function applyReactInstant(power)
     local ball, hrp = getReactTargets()
     if not (ball and ball.Parent and hrp) then return end
     if not prepareBall(ball) then return end
-    local aim      = getAimDirection(hrp)
-    local redirect = P.counterReact and getIncomingRedirect(ball, hrp)
-    local dir      = redirect or aim
+    local dir = getAimDirection(hrp)
     local targetPos = hrp.Position + dir * 0.15 + Vector3.new(0, 0.05, 0)
-
     pcall(function() ball.CFrame = CFrame.new(targetPos) end)
-    local finalVel = dir * (power * ballSpeedMult)
-    
-    if P.instantVelocity then
-        pcall(function() ball.AssemblyLinearVelocity = finalVel end)
-    else
-        local rampSteps = (power > 1e15) and 3 or 1
-        applyVelocityRamped(ball, finalVel, rampSteps)
-    end
-    pcall(function() ball.AssemblyAngularVelocity = Vector3.new(0,0,0) end)
+    pcall(function() ball.AssemblyLinearVelocity = dir * (power * ballSpeedMult) end)
+    pcall(function() ball.AssemblyAngularVelocity = Vector3.new(0, 0, 0) end)
     flashBall()
 end
 
@@ -1585,40 +1550,29 @@ if not _G._TLContinuousReactConn then
         if not (ball and ball.Parent and hrp) then return end
         if not ball:IsA("BasePart") then return end
         local dist = (ball.Position - hrp.Position).Magnitude
-        if dist > 30 then return end
-        local coming = isBallComingToPlayer(ball, hrp, 25)
-        if not coming and dist > 12 then return end
+        if dist > 15 then return end
+        local coming = isBallComingToPlayer(ball, hrp, 10)
+        if not coming and dist > 8 then return end
         if not prepareBall(ball) then return end
-        local aim      = getAimDirection(hrp)
-        local redirect = P.counterReact and getIncomingRedirect(ball,hrp)
-        local dir      = redirect or aim
-        local targetPos = hrp.Position + dir * 0.15 + Vector3.new(0,0.05,0)
+        local dir = getAimDirection(hrp)
+        local targetPos = hrp.Position + dir * 0.15 + Vector3.new(0, 0.05, 0)
         pcall(function() ball.CFrame = CFrame.new(targetPos) end)
         pcall(function() ball.AssemblyLinearVelocity = dir * (continuousPower * ballSpeedMult) end)
-        pcall(function() ball.AssemblyAngularVelocity = Vector3.new(0,0,0) end)
+        pcall(function() ball.AssemblyAngularVelocity = Vector3.new(0, 0, 0) end)
     end)
 end
 
-local function applyPreset(power, _, extraOffset, extraVel, curve)
+local function applyPreset(power, _, extraOffset)
     currentReactPower = power; P.reactPower = power
     enableReactHook()
     local ball, hrp = getReactTargets()
     if not (ball and hrp) then return end
     if not prepareBall(ball) then return end
-    local aim      = getAimDirection(hrp)
-    local redirect = P.counterReact and getIncomingRedirect(ball,hrp)
-    local baseDir  = redirect or aim
-    local offset   = extraOffset or 0.15
-    local finalDir = extraVel and (baseDir + Vector3.new(0,extraVel,0)).Unit or baseDir
-    pcall(function() ball.CFrame = CFrame.new(hrp.Position + baseDir*offset + Vector3.new(0,0.05,0)) end)
-    local finalVel = finalDir * (power * ballSpeedMult)
-    if P.instantVelocity then
-        pcall(function() ball.AssemblyLinearVelocity = finalVel end)
-    else
-        applyVelocityRamped(ball, finalVel, 2)
-    end
-    if curve then pcall(function() ball.AssemblyAngularVelocity = Vector3.new(0,curve*50,0) end)
-    else pcall(function() ball.AssemblyAngularVelocity = Vector3.new(0,0,0) end) end
+    local dir = getAimDirection(hrp)
+    local offset = extraOffset or 0.15
+    pcall(function() ball.CFrame = CFrame.new(hrp.Position + dir * offset + Vector3.new(0, 0.05, 0)) end)
+    pcall(function() ball.AssemblyLinearVelocity = dir * (power * ballSpeedMult) end)
+    pcall(function() ball.AssemblyAngularVelocity = Vector3.new(0, 0, 0) end)
     flashBall()
 end
 
@@ -1647,11 +1601,11 @@ ReactsTab:Slider({ Title="Multiplicador Velocidad", Value={Min=1,Max=50,Default=
     Callback=function(val) ballSpeedMult=val; P.ballSpeedMult=val end })
 
 ReactsTab:Section({ Title="Preajustes de Accion" })
-ReactsTab:Button({ Title="HYPER SNAP",   Desc="Snap ultra rapido!",    Callback=function() applyPreset(3e20,nil,0.2,nil,1);   VxnityUI:Notify({Title="HYPER SNAP",Desc="Snap!",  Duration=2}) end })
-ReactsTab:Button({ Title="MEGA LOCK",    Desc="Bloqueo pesado!",       Callback=function() applyPreset(5e22,nil,0);           VxnityUI:Notify({Title="MEGA LOCK", Desc="Lock!",  Duration=2}) end })
-ReactsTab:Button({ Title="ULTRA PIVOT",  Desc="Pivote!",               Callback=function() applyPreset(4e22,nil,0.15,nil,2); VxnityUI:Notify({Title="PIVOT",     Desc="Activo!",Duration=2}) end })
-ReactsTab:Button({ Title="KENYAH MAX",   Desc="Prediccion!",           Callback=function() applyPreset(6e23,nil,0.15,nil,1.5);VxnityUI:Notify({Title="KENYAH",    Desc="Activo!",Duration=2}) end })
-ReactsTab:Button({ Title="AERO MAX",     Desc="Aereo!",                Callback=function() applyPreset(5e22,nil,0.18,0.08,0.8);VxnityUI:Notify({Title="AERO",    Desc="Activo!",Duration=2}) end })
+ReactsTab:Button({ Title="HYPER SNAP",   Desc="Snap ultra rapido!",    Callback=function() applyPreset(3e20, nil, 0.2);   VxnityUI:Notify({Title="HYPER SNAP",Desc="Snap!",  Duration=2}) end })
+ReactsTab:Button({ Title="MEGA LOCK",    Desc="Bloqueo pesado!",       Callback=function() applyPreset(5e22, nil, 0);     VxnityUI:Notify({Title="MEGA LOCK", Desc="Lock!",  Duration=2}) end })
+ReactsTab:Button({ Title="ULTRA PIVOT",  Desc="Pivote!",               Callback=function() applyPreset(4e22, nil, 0.15);  VxnityUI:Notify({Title="PIVOT",     Desc="Activo!",Duration=2}) end })
+ReactsTab:Button({ Title="KENYAH MAX",   Desc="Prediccion!",           Callback=function() applyPreset(6e23, nil, 0.15);  VxnityUI:Notify({Title="KENYAH",    Desc="Activo!",Duration=2}) end })
+ReactsTab:Button({ Title="AERO MAX",     Desc="Aereo!",                Callback=function() applyPreset(5e22, nil, 0.18);  VxnityUI:Notify({Title="AERO",    Desc="Activo!",Duration=2}) end })
 
 -- Touch-react
 if not _G._TLTouchReactConn then
@@ -1713,9 +1667,9 @@ ReactsTab:Toggle({ Title="Velocidad Instantanea", Desc="Fuerza velocidad instant
     Callback=function(state) P.instantVelocity=state end })
 
 ReactsTab:Section({ Title="Direccion del React" })
-ReactsTab:Toggle({ Title="Direccion: Camara", Desc="Apunta donde mira la camara",
+ReactsTab:Toggle({ Title="Direccion: Camara", Desc="Apunta donde mira la camara", PersistKey="reactDirCamera",
     Callback=function(state) if state then P.reactDirection="camera" end end })
-ReactsTab:Toggle({ Title="Direccion: Mouse", Desc="Apunta donde apuntas",
+ReactsTab:Toggle({ Title="Direccion: Mouse", Desc="Apunta donde apuntas", PersistKey="reactDirMouse",
     Callback=function(state) if state then P.reactDirection="mouse" end end })
 
 ReactsTab:Section({ Title="React Counter" })
@@ -1755,9 +1709,9 @@ ReactsTab:Button({ Title="Activar GK Hook", Desc="Hook para Saves/Headers/Kicks"
                     if ball and hrp then
                         pcall(function()
                             prepareBall(ball)
-                            local aim = getAimDirection(hrp)
-                            ball.CFrame = CFrame.new(hrp.Position + aim * 0.15 + Vector3.new(0,0.05,0))
-                            applyVelocityRamped(ball, aim * (currentReactPower * ballSpeedMult), 2)
+                            local dir = getAimDirection(hrp)
+                            ball.CFrame = CFrame.new(hrp.Position + dir * 0.15 + Vector3.new(0,0.05,0))
+                            ball.AssemblyLinearVelocity = dir * (currentReactPower * ballSpeedMult)
                         end)
                     end
                 end
