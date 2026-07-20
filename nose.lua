@@ -603,7 +603,7 @@ function VxnityUI:CreateWindow(opts)
         Content.Position = UDim2.new(0, 135, 0, 42)
     end
     Content.BackgroundColor3 = BG_DARK; Content.BorderSizePixel = 0; Content.Parent = MainFrame
-    Instance.new("UIClipDescendants",Content)
+    Content.ClipDescendants = true
 
     local dragging, dragStart, startPos
     TopBar.InputBegan:Connect(function(input)
