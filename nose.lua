@@ -579,7 +579,7 @@ function VxnityUI:CreateWindow(opts)
         Sidebar.ScrollBarThickness = 0
         Sidebar.CanvasSize = UDim2.new(0, 0, 0, 0)
         Sidebar.AutomaticCanvasSize = Enum.AutomaticSize.X
-        Sidebar.ScrollingDirection = Enum.ScrollingDirection.Horizontal
+        Sidebar.ScrollingDirection = Enum.ScrollingDirection.X
         Sidebar.Size = UDim2.new(1, -12, 0, 38)
         Sidebar.Position = UDim2.new(0, 6, 0, 42)
     else
